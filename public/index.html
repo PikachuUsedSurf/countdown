@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket Countdown</title>
+</head>
+<body>
+<h1 id="countdown">Countdown: 60</h1>
+<button onclick="incrementAndReset()">Increment and Reset</button>
+<p id="lastReset">Last reset: Never</p>
+<p id="incrementCount">Increment count: 0</p>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+    const socket = io();
+
+    socket.on('countdown', (countdown) => {
+        document.getElementById('countdown').innerText = `Countdown: ${countdown}`;
+    });
+
+    socket.on('lastReset', ({ timestamp, count }) => {
+        const lastResetElement = document.getElementById('lastReset');
+        lastResetElement.innerText = `Last reset: ${new Date(timestamp).toLocaleTimeString()}`;
+
+        const incrementCountElement = document.getElementById('incrementCount');
+        incrementCountElement.innerText = `Increment count: ${count}`;
+    });
+
+    function incrementAndReset() {
+        socket.emit('incrementAndReset');
+    }
+</script>
+</body>
+</html>
