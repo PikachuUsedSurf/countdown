@@ -1,50 +1,99 @@
 const express = require('express');
 const http = require('http');
 const socketIO = require('socket.io');
+const path = require('path');
 
-const app = express();
-const server = http.createServer(app);
-const io = socketIO(server);
+const initializeServer = () => {
+    const app = express();
+    const server = http.createServer(app);
+    const io = socketIO(server);
 
-app.use(express.static(__dirname + '/public'));
+    app.use(express.static(path.join(__dirname, 'public')));
 
-let globalCountdown = 60;
-let globalIncrementCount = 0;
-let globalLastResetTimestamp = null;
+    let globalCountdown = 60;
+    let globalIncrementCount = 0;
+    let globalLastResetTimestamp = null;
+    let lastUpdateTimestamp = Date.now();
 
-io.on('connection', (socket) => {
-    console.log('A user connected');
+    const socketCountdowns = new Map();
 
-    // Join a room based on the user's ID (socket ID)
-    const room = socket.id;
-    socket.join(room);
+    io.on('connection', (socket) => {
+        console.log('A user connected');
 
-    // Emit global countdown values
-    const countdownInterval = setInterval(() => {
-        io.emit('countdown', globalCountdown);
-        globalCountdown--;
+        const room = socket.id;
+        socket.join(room);
 
-        if (globalCountdown < 0) {
-            clearInterval(countdownInterval);
+        const timeElapsed = Date.now() - lastUpdateTimestamp;
+        const initialCountdown = Math.max(0, globalCountdown - Math.floor(timeElapsed / 1000));
+
+        socket.emit('countdown', initialCountdown);
+        socket.emit('lastReset', { timestamp: globalLastResetTimestamp, count: globalIncrementCount });
+
+        if (socketCountdowns.has(room)) {
+            const { countdown, incrementCount, lastResetTimestamp } = socketCountdowns.get(room);
+            socket.emit('countdown', countdown);
+            socket.emit('lastReset', { timestamp: lastResetTimestamp, count: incrementCount });
         }
-    }, 1000);
 
-    socket.on('disconnect', () => {
-        console.log('User disconnected');
+        let countdownInitialized = false;
+        let previousCountdown = globalCountdown;
+
+        const countdownInterval = setInterval(() => {
+            if (!countdownInitialized) {
+                io.to(room).emit('countdown', globalCountdown);
+                countdownInitialized = true;
+            } else {
+                if (previousCountdown !== globalCountdown) {
+                    io.emit('countdown', globalCountdown);
+                    previousCountdown = globalCountdown;
+                }
+            }
+
+            globalCountdown--;
+
+            if (globalCountdown < 0) {
+                globalCountdown = 60;
+                lastUpdateTimestamp = Date.now();
+            }
+        }, 1000);
+
+        socket.on('disconnect', () => {
+            console.log('User disconnected');
+            clearInterval(countdownInterval);
+        });
+
+        socket.on('reconnect', (attemptNumber) => {
+            console.log(`User reconnected after ${attemptNumber} attempts`);
+        });
+
+        socket.on('incrementAndReset', () => {
+            globalLastResetTimestamp = Date.now();
+            globalIncrementCount++;
+            globalCountdown = 60;
+            lastUpdateTimestamp = Date.now();
+
+            socketCountdowns.set(room, {
+                countdown: globalCountdown,
+                incrementCount: globalIncrementCount,
+                lastResetTimestamp: globalLastResetTimestamp,
+            });
+
+            if (previousCountdown !== globalCountdown) {
+                io.emit('countdown', globalCountdown);
+                io.emit('lastReset', { timestamp: globalLastResetTimestamp, count: globalIncrementCount });
+                previousCountdown = globalCountdown;
+            }
+        });
     });
 
-    socket.on('incrementAndReset', () => {
-        // Reset global countdown, update global last reset timestamp, and increment global count
-        globalCountdown = 60;
-        globalLastResetTimestamp = Date.now();
-        globalIncrementCount++;
-
-        // Emit updated values to all connected users
-        io.emit('lastReset', { timestamp: globalLastResetTimestamp, count: globalIncrementCount });
+    server.on('error', (error) => {
+        console.error('Server error:', error);
     });
-});
 
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-    console.log(`Server is running on http://localhost:${PORT}`);
-});
+    const PORT = process.env.PORT || 3000;
+    server.listen(PORT, () => {
+        console.log(`Server is running on http://localhost:${PORT}`);
+    });
+};
+
+initializeServer();
